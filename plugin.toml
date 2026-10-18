@@ -1,0 +1,22 @@
+format = 1
+memcastle = ">=0.4, <0.6"
+# Add shared support files or directories here; integration manifests supply their own assets.
+artifacts = []
+
+[plugin]
+id = "slack"
+provider = "slack"
+description = "Scoped Slack conversation history source"
+repository = "https://github.com/memcastle/memcastle-slack"
+license = "MIT"
+
+
+
+[[modules]]
+id = "slack"
+type = "source"
+manifest = "sources/slack/memcastle-source.toml"
+entry = "sources/slack/source.wasm"
+contract = "0.4.0"
+
+

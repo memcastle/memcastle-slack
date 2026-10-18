@@ -1,0 +1,124 @@
+name: 🧩 CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      tag:
+        description: Reviewed release tag to build rather than the caller's branch commit
+        type: string
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+
+  source:
+    name: 🦀 Source ${{ matrix.source }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    strategy:
+      fail-fast: false
+      matrix:
+        source: ["slack"]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag || github.sha }}
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-wasip2
+
+      - uses: Swatinem/rust-cache@v2
+      - name: Check source formatting and warnings
+        env:
+          MODULE: ${{ matrix.source }}
+        run: |
+          cargo fmt --manifest-path "sources/$MODULE/Cargo.toml" --all -- --check
+          cargo clippy --manifest-path "sources/$MODULE/Cargo.toml" --locked --target wasm32-wasip2 -- -D warnings
+
+      - name: Test source natively
+        env:
+          MODULE: ${{ matrix.source }}
+        run: cargo test --manifest-path "sources/$MODULE/Cargo.toml" --locked --lib
+
+      - name: Build reproducible source component
+        env:
+          MODULE: ${{ matrix.source }}
+        run: |
+          set -euo pipefail
+          module_dir="$PWD/sources/$MODULE"
+          cargo_home="$(realpath "${CARGO_HOME:-$HOME/.cargo}")"
+          sysroot="$(rustc --print sysroot)"
+          commit="$(rustc --version --verbose | awk '/^commit-hash: / {print $2}')"
+          export CARGO_BUILD_RUSTC_WRAPPER=
+          unset RUSTFLAGS
+          export CARGO_ENCODED_RUSTFLAGS="--remap-path-prefix=$cargo_home=/cargo"$'\x1f'"--remap-path-prefix=$sysroot/lib/rustlib/src/rust=/rustc/$commit"$'\x1f'"--remap-path-prefix=$module_dir=/module"
+          cargo build --manifest-path "$module_dir/Cargo.toml" --locked --release --target wasm32-wasip2
+          crate="$(cargo metadata --no-deps --format-version 1 --manifest-path "$module_dir/Cargo.toml" | jq -er '.packages[0].targets[] | select(.kind | index("cdylib")) | .name')"
+          cp "$module_dir/target/wasm32-wasip2/release/$crate.wasm" "$module_dir/source.wasm"
+          mkdir -p "$module_dir/dist"
+          cp "$module_dir/source.wasm" "$module_dir/dist/source.wasm"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: source-${{ matrix.source }}
+          path: sources/${{ matrix.source }}/source.wasm
+          if-no-files-found: error
+
+
+
+  package:
+    name: 🏗️ Package
+
+    needs: [source]
+
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag || github.sha }}
+          fetch-depth: 0
+          fetch-tags: true
+      - uses: memcastle/memcastle@main
+        with:
+          version: main
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: source-slack
+          path: sources/slack/
+
+
+      - name: Package plugin
+        run: memcastle plugin package
+      - uses: actions/upload-artifact@v7
+        with:
+          name: plugin-package
+          path: |
+            dist/*.tar.gz
+            dist/*.sha256sum
+            sources/*/source.wasm
+          if-no-files-found: error
+
+  validate:
+    name: 🧪 Check with Core
+    needs: package
+    if: ${{ always() && needs.package.result == 'success' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        core: ["main"]
+    uses: memcastle/memcastle/.github/workflows/plugin-validation.yaml@main
+    with:
+      artifact-name: plugin-package
+      core-version: ${{ matrix.core }}
+      plugin-ref: ${{ inputs.tag }}
