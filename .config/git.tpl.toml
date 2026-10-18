@@ -1,0 +1,28 @@
+# git-tpl — https://noirbizarre.github.io/git-tpl/configuration/
+#
+# This file is versioned with the project. Edit an answer and run
+# `git tpl update` to re-render the template with it.
+
+[template]
+source = "https://github.com/memcastle/memcastle-plugin.tpl"
+
+[answers]
+codecov = false
+core_versions = ["main"]
+description = "Scoped Slack conversation history source"
+gh_ship = false
+github_owner = "memcastle"
+integration_template = "https://github.com/memcastle/memcastle-integration.tpl"
+integrations = []
+memcastle = ">=0.4, <0.6"
+plugin_id = "slack"
+provider = "slack"
+repository_name = "memcastle-slack"
+source_template = "https://github.com/memcastle/memcastle-source.tpl"
+sources = ["slack"]
+
+[[composed]]
+from = "sources"
+source = "https://github.com/memcastle/memcastle-source.tpl"
+ref = "main"
+commit = "5f2a8350bd82c49ec2370d70c83019ff6fc5a822"
