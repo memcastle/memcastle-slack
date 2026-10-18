@@ -3,7 +3,7 @@ format = 1
 [source]
 name = "slack"
 version = "0.1.0"
-description = "Text files from a selected directory"
+description = "Explicitly scoped Slack channels, direct messages and threaded history"
 
 [compatibility]
 contract = "0.4.0"
@@ -11,10 +11,52 @@ memcastle = ">=0.4, <0.6"
 
 [capabilities]
 incremental = true
+retains_raw = true
+needs_credentials = true
 
-# The host only allows access to the chosen directory.
-[permissions.filesystem]
-read = ["locator"]
+[permissions]
+env = ["MEMCASTLE_SLACK_BOT_TOKEN", "MEMCASTLE_SLACK_USER_TOKEN"]
+process = ["curl"]
+
+[options.account]
+type = "string"
+description = "required non-secret account label for independent source identity"
+
+[options.workspace]
+type = "string"
+description = "exact Slack workspace/team ID (T...), alternatively a locator"
+
+[options.auth_mode]
+type = "string"
+description = "bot or user; selects the temporary daemon credential variable"
+
+[options.conversations]
+type = "string"
+breadth = "opt_in_include"
+description = "required exact Slack channel, DM or group-DM IDs, comma-separated"
+
+[options.threads]
+type = "string"
+breadth = "include"
+description = "optional exact CONVERSATION_ID:root_ts thread selectors"
+
+[options.users]
+type = "string"
+breadth = "include"
+description = "optional exact Slack user IDs whose messages to retain"
+
+[options.since]
+type = "date"
+breadth = "since"
+description = "bootstrap lower bound (YYYY-MM-DD or Slack timestamp)"
+
+[options.until]
+type = "date"
+description = "optional upper history bound"
+
+[options.revisit_days]
+type = "string"
+description = "recent roots to recheck on later runs (1-30 days, default 7)"
 
 [build]
 command = ["cargo", "build", "--release", "--target", "wasm32-wasip2", "--target-dir", "target"]

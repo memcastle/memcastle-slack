@@ -122,3 +122,5 @@ jobs:
       artifact-name: plugin-package
       core-version: ${{ matrix.core }}
       plugin-ref: ${{ inputs.tag }}
+      fixture-bin: sources/slack/fixtures/bin
+      extra-smoke-command: node scripts/smoke_miners.mjs

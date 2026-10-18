@@ -1,0 +1,24 @@
+{
+  "name": "group-dm-selected-thread",
+  "description": "A group-DM source reads only the explicit selected thread",
+  "locator": "tree",
+  "options": {
+    "workspace": "T123456789",
+    "account": "work-bot",
+    "auth_mode": "bot",
+    "conversations": "G123456789",
+    "threads": "G123456789:1760000002.000001"
+  },
+  "limit": 1,
+  "documents": [
+    {
+      "external_id": "G123456789:1760000002.000001",
+      "title": "G123456789 · 1760000002.000001",
+      "kind": "transcript",
+      "room": "conversations",
+      "tags": ["slack", "conversation:G123456789", "kind:group-dm"],
+      "segments": ["[1760000002.000001] U123456789: Status update"]
+    }
+  ],
+  "skipped": []
+}
