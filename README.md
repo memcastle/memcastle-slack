@@ -26,7 +26,8 @@ node scripts/smoke_miners.mjs
 ```
 
 The archive in `dist/` includes the source component and a generated manifest; `plugin.toml` describes stable module IDs and paths, and `sources/slack/Cargo.lock` locks source dependencies.
-CI builds the exact artifact and validates it against Core's `main` development prerelease through the shared plugin-validation workflow.
+CI builds the exact artifact and validates it against Core's `development` prerelease through the shared plugin-validation workflow.
+The Core setup action verifies the fixed development binary against `SHA256SUMS` before packaging and validation.
 Its extra smoke test covers two miners sharing one bot account, a second bot account and a user file credential.
 No live Slack workspace is needed for the offline fixtures.
 Set `MEMCASTLE_BIN=/path/to/current/memcastle` when the default CLI predates the source-credential contract.

@@ -33,7 +33,7 @@ jobs:
           persist-credentials: false
       - uses: memcastle/memcastle@main
         with:
-          version: main
+          version: development
       - name: Require reviewed tag on main and existing draft
         env:
           GH_TOKEN: ${{ github.token }}
