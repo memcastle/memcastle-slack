@@ -1,14 +1,39 @@
 # memcastle-slack
 
-[![CI](https://github.com/memcastle/memcastle-slack/actions/workflows/ci.yaml/badge.svg?branch=main)](https://github.com/memcastle/memcastle-slack/actions/workflows/ci.yaml) [![Codecov](https://codecov.io/gh/memcastle/memcastle-slack/graph/badge.svg)](https://codecov.io/gh/memcastle/memcastle-slack)
+[![CI][ci-badge]][ci-workflow] [![Codecov][codecov-badge]][codecov-project]
 
-Standalone MemCastle plugin for explicitly scoped Slack conversation and thread history. Supports independently selected bot and user Web API tokens from named source configurations; credentials stay outside plugin configuration and memory. Requires a Core build with [PR #335](https://github.com/memcastle/memcastle/pull/335). See [the source guide](sources/slack/README.md) for Slack app scopes, installation, multiple accounts and independently routed miners.
+[ci-badge]: https://github.com/memcastle/memcastle-slack/actions/workflows/ci.yaml/badge.svg?branch=main
+[ci-workflow]: https://github.com/memcastle/memcastle-slack/actions/workflows/ci.yaml
+[codecov-badge]: https://codecov.io/gh/memcastle/memcastle-slack/graph/badge.svg
+[codecov-project]: https://codecov.io/gh/memcastle/memcastle-slack
 
-The plugin contains one `slack` source module. Installation does not enable the source or start a miner; enable it explicitly with `memcastle source enable slack`. It mines only configured channel, private-channel, DM or group-DM IDs, with a stable document per thread and Core-managed revisions, cursors and destinations. Deletions are not propagated by Core.
+Standalone plugin for explicitly scoped Slack conversation and thread history.
 
-## Build and validate
+The `slack` source supports independently selected bot and user Web API tokens from named source configurations;
+credentials remain outside plugin configuration and memory. It mines only configured channel, private-channel,
+DM or group-DM IDs. Each thread has a stable document with Core-managed revisions, cursors and destinations;
+deletions are not propagated by Core. Use a Core build with [PR #335](https://github.com/memcastle/memcastle/pull/335).
+See [the source guide](sources/slack/README.md) for app scopes, installation, accounts and miner routing.
 
-Install Rust's `wasm32-wasip2` target and a plugin-capable MemCastle CLI. From the repository root:
+## Install
+
+When a release is available in the [MemCastle plugin catalogue](https://memcastle.github.io/plugins.json),
+install it by ID with a plugin-capable MemCastle Core binary:
+
+```sh
+memcastle plugin install slack
+memcastle source enable slack
+```
+
+Core retrieves and verifies the release archive. Installation alone does not activate the source or start a miner;
+configure a named source and scoped miners as shown in the source guide. If no release is available yet,
+build the archive below and install `dist/slack-VERSION.tar.gz` instead.
+
+## Build and test locally
+
+Install Rust with the `wasm32-wasip2` target and a plugin-capable MemCastle CLI. Use
+`MEMCASTLE_BIN=/path/to/current/memcastle` when the default CLI predates the selected-credential contract.
+Commit `sources/slack/Cargo.lock` for reproducible builds.
 
 ```sh
 cargo fmt --manifest-path sources/slack/Cargo.toml --all -- --check
@@ -25,16 +50,22 @@ memcastle plugin test dist/slack-VERSION.tar.gz
 node scripts/smoke_miners.mjs
 ```
 
-The archive in `dist/` includes the source component and a generated manifest; `plugin.toml` describes stable module IDs and paths, and `sources/slack/Cargo.lock` locks source dependencies.
-CI builds the exact artifact and validates it against Core's `development` prerelease through the shared plugin-validation workflow.
-The Core setup action verifies the fixed development binary against `SHA256SUMS` before packaging and validation.
-Its extra smoke test covers two miners sharing one bot account, a second bot account and a user file credential.
-No live Slack workspace is needed for the offline fixtures.
-Set `MEMCASTLE_BIN=/path/to/current/memcastle` when the default CLI predates the source-credential contract.
+Replace `VERSION` with the archive version in `dist/`. Packaging includes the source component and a generated
+`manifest.toml` with an external `.sha256sum`; `plugin.toml` retains the stable module identity and paths.
 
-Native Rust tests upload LCOV coverage and JUnit results to Codecov using GitHub OIDC.
-The repository's `.github/codecov.yml` defines project, patch and source-module coverage checks.
+## CI and releases
 
-Releases use gh-ship and git-cliff: a releasable Conventional Commit on `main` opens a `release/next` PR.
-Merging that PR publishes the validated `slack/vVERSION` archive.
-The `release` environment supplies the GitHub App variable `APP_CLIENT_ID` and secret `APP_PRIVATE_KEY` to these workflows.
+CI validates the exact artifact against Core `development` with the shared plugin-validation workflow.
+The Core setup action checks the binary against `SHA256SUMS`; an extra offline smoke covers miners sharing
+one bot account, a second bot account and a user file credential. No live Slack workspace is needed.
+
+Native Rust tests upload LCOV coverage and JUnit results to Codecov via GitHub OIDC.
+The repository's `.github/codecov.yml` defines the project, patch and source-module checks.
+
+gh-ship and git-cliff open a reviewed `release/next` PR for releasable commits. After it merges,
+the validated `slack/vVERSION` archive is published. Configure `APP_CLIENT_ID` and `APP_PRIVATE_KEY` in
+the `release` environment for an installed GitHub App.
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development and [AGENTS.md](AGENTS.md) for agent guidance.

@@ -22,6 +22,7 @@ integrations = []
 memcastle = ">=0.4, <0.6"
 plugin_id = "slack"
 provider = "slack"
+registry = true
 repository_name = "memcastle-slack"
 ship_token = "app"
 source_template = "https://github.com/memcastle/memcastle-source.tpl"
