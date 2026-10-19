@@ -119,7 +119,7 @@ jobs:
           fetch-tags: true
       - uses: memcastle/memcastle@main
         with:
-          version: main
+          version: development
 
       - uses: actions/download-artifact@v8
         with:
@@ -145,7 +145,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        core: ["main"]
+        core: ["development"]
     uses: memcastle/memcastle/.github/workflows/plugin-validation.yaml@main
     with:
       artifact-name: plugin-package
