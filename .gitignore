@@ -7,4 +7,4 @@ sources/*/coverage/
 sources/*/source.wasm
 integrations/*/node_modules/
 integrations/*/coverage/
-
+ship.release.json
