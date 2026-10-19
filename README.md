@@ -27,8 +27,8 @@ No module needs a private Core checkout or a sibling provider to build or test.
 Core's plugin smoke test starts an isolated daemon and checks archive installation and source activation;
 it does not register the integration with an agent.
 Provider `ci.yaml` builds, tests and packages locally, then calls Core's shared artifact-validation workflow for the
-static Core matrix selected by `core_versions` (default `main`). When plugin-capable stable releases exist,
-selecting a minor tree such as `0.5` tests its latest published patch; `main` uses the development prerelease.
+static Core matrix selected by `core_versions` (default `development`). When plugin-capable stable releases exist,
+selecting a minor tree such as `0.5` tests its latest published patch; `development` uses the moving prerelease.
 The reusable validation workflow follows Core's `main` branch without a revision pin.
 It runs on every pull request and every push to `main`, including merges, without a second push run on PR branches.
 Every version exercises source fixtures and archive installation/activation; incompatible versions fail the workflow.
