@@ -6,7 +6,12 @@ This source mines only explicitly named Slack conversation IDs (public/private c
 
 Create a Slack app with read-only Web API access and install it in the workspace. For the conversation types used, grant the matching `channels:read` + `channels:history` (public), `groups:read` + `groups:history` (private), `im:read` + `im:history` (DM) and/or `mpim:read` + `mpim:history` (group DM) scopes. Slack's bot token sees conversations the bot has joined; a user token sees the user's accessible conversations. Neither token grants blanket access to every private channel or DM. Collect workspace (`T...`), conversation (`C...`, `G...`, `D...`) and optional user (`U...`, `W...`) IDs from Slack. A channel name is not a selector: IDs remain stable across renames.
 
-Until [Core's named-source credential grant](https://github.com/memcastle/memcastle/issues/332) is available, set `MEMCASTLE_SLACK_BOT_TOKEN` and/or `MEMCASTLE_SLACK_USER_TOKEN` **in the daemon's environment**. Never place a token in TOML, an option, a process argument or a palace drawer. Source configs can share the bot or user sign-in, but separate simultaneously active bot accounts (or separate user accounts) need the Core change before their credentials can be selected independently. Set `auth_mode` to select the matching temporary variable; no token is inherited from the shell running only the CLI if the daemon has a different environment.
+Use a Core build including [PR #335](https://github.com/memcastle/memcastle/pull/335) for selected source-config credentials.
+Each `[[source_configs]]` chooses its own `env` variable or `file` reference; `auth_mode` declares whether that reference contains a bot or user token.
+Set environment variables **in the daemon's environment**, not only in the shell running the CLI; Core reads the first line of a credential file at execution time.
+Never place token values in TOML, options, process arguments or palace drawers.
+Only the token selected for a job is passed to the source; `curl` receives it on stdin in an Authorization header and does not inherit the credential variable or file.
+Multiple named bot/user accounts and workspaces can coexist, while multiple miners may reuse one account configuration.
 
 Install and enable the plugin, then define one named configuration and two independently scoped miners:
 
@@ -19,7 +24,7 @@ memcastle source enable slack
 [[source_configs]]
 id = "slack-work"
 source = "slack"
-credential = { type = "env", name = "MEMCASTLE_SLACK_BOT_TOKEN" }
+credential = { type = "env", name = "SLACK_WORK_BOT_TOKEN" }
 [source_configs.options]
 workspace = "T123456789"
 account = "work-bot"
@@ -47,9 +52,31 @@ conversations = ["G123456789", "D123456789"]
 [miners.schedule]
 every = "1d"
 enabled = false
+
+[[source_configs]]
+id = "slack-personal"
+source = "slack"
+credential = { type = "file", path = "/run/secrets/slack-personal" }
+[source_configs.options]
+workspace = "T987654321"
+account = "personal-user"
+auth_mode = "user"
+
+[[miners]]
+name = "slack-personal-dm"
+source = "slack"
+source_config = "slack-personal"
+wing = "personal"
+[miners.options]
+conversations = ["D987654321"]
 ```
 
-Run `memcastle miner run slack-project` and `memcastle miner run slack-ops`; schedules require explicit enabling. The first run starts at the beginning of each selected conversation unless `since` is set. The shared sign-in/configuration is not the cursor: scope, account and Core destination mapping give each miner its own source identity. Renaming a miner without changing scope/mapping retains its cursor. A selected conversation that is inaccessible (including private channels a bot did not join), archived or deleted fails the run instead of being silently skipped. A user-mode source config can use `credential = { type = "env", name = "MEMCASTLE_SLACK_USER_TOKEN" }` and `auth_mode = "user"`.
+Run `memcastle miner run slack-project`, `memcastle miner run slack-ops` and `memcastle miner run slack-personal-dm`; schedules require explicit enabling.
+The first run starts at the beginning of each selected conversation unless `since` is set.
+The shared sign-in/configuration is not the cursor: scope, named configuration, account and Core destination mapping give each miner an independent source identity.
+Renaming a miner without changing scope/mapping retains its cursor.
+A selected conversation that is inaccessible (including private channels a bot did not join), archived or deleted fails the run instead of being silently skipped.
+Configure another bot account with its own named source config and credential reference the same way; credential references may be rotated without storing their contents in a job.
 
 ## Options and behavior
 
@@ -57,7 +84,7 @@ Run `memcastle miner run slack-project` and `memcastle miner run slack-ops`; sch
 |---|---|
 | `workspace` | Exact `T...` workspace ID, supplied in a source config or as locator; validated with `auth.test`. |
 | `account` | Required non-secret slug identifying this sign-in. |
-| `auth_mode` | Required `bot` or `user`. |
+| `auth_mode` | Required `bot` or `user`; the named config's credential provides the token. |
 | `conversations` | Required, 1–32 exact `C/G/D...` IDs; no wildcard or implicit workspace-wide scan. |
 | `threads` | Optional `CONVERSATION_ID:root_ts` selections within the conversations above. |
 | `users` | Optional exact author IDs; retains only their messages within a selected thread. |
@@ -83,4 +110,7 @@ memcastle plugin test dist/slack-VERSION.tar.gz
 node scripts/smoke_miners.mjs  # requires Node.js and a plugin-capable Core CLI
 ```
 
-For live failures, check the daemon's variable and selected `auth_mode`; an incorrect workspace ID fails `auth.test`; `missing_scope`, `not_in_channel` and inaccessible/archived conversations require correcting the Slack app's scopes or membership and then rerunning. The source never puts Slack's response body or an auth header in an error. `revisit_days` controls root-age lookback, not Slack retention or a guarantee to capture deletions.
+For live failures, check that the selected source config's env/file reference resolves and matches `auth_mode`.
+An incorrect workspace ID fails `auth.test`; `missing_scope`, `not_in_channel` and inaccessible/archived conversations require correcting the Slack app's scopes or membership and then rerunning.
+The source never puts Slack's response body or an auth header in an error.
+`revisit_days` controls root-age lookback, not Slack retention or a guarantee to capture deletions.

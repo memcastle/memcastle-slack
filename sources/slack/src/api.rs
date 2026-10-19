@@ -3,8 +3,6 @@
 use serde_json::Value;
 
 use crate::SourceRef;
-#[cfg(not(test))]
-use crate::option;
 
 #[cfg(not(test))]
 fn run_process(
@@ -49,23 +47,24 @@ fn run_process(
     })
 }
 
-// Temporary until Core exposes the named configuration credential (memcastle/memcastle#332).
-// Both names are explicitly allowlisted in the source manifest; no option carries a secret.
+// Core resolves the selected configuration's env/file reference before executing the job.
+// Conformance has no job credential: its offline curl stand-in accepts an absent header,
+// while Slack itself returns `not_authed` and cannot provide any live data without one.
 #[cfg(not(test))]
-fn token(source: &SourceRef) -> Result<Option<String>, String> {
-    let name = match option(source, "auth_mode") {
-        Some("bot") => "MEMCASTLE_SLACK_BOT_TOKEN",
-        Some("user") => "MEMCASTLE_SLACK_USER_TOKEN",
-        _ => return Err("Slack auth_mode must be bot or user".into()),
-    };
-    // A missing token produces Slack's `not_authed` error. It also lets the
-    // offline conformance transport run without a real secret in CI.
-    Ok(std::env::var(name).ok().filter(|value| !value.is_empty()))
+fn token(_source: &SourceRef) -> Option<String> {
+    crate::memcastle::source::host::source_credential().ok()
 }
 
 #[cfg(test)]
-fn token(_source: &SourceRef) -> Result<Option<String>, String> {
-    Ok(Some("fixture-token".into()))
+fn token(source: &SourceRef) -> Option<String> {
+    Some(
+        match crate::option(source, "account") {
+            Some("other-bot") => "fixture-other-bot",
+            Some("personal-user") if source.locator == "T987654321" => "fixture-personal",
+            _ => "fixture-work",
+        }
+        .into(),
+    )
 }
 
 fn quote(value: &str) -> Result<String, String> {
@@ -115,7 +114,7 @@ pub(crate) fn request(
         "url = \"{}\"\nheader = \"Accept: application/json\"\n",
         quote(&address)?
     );
-    if let Some(secret) = token(source)? {
+    if let Some(secret) = token(source) {
         config.push_str(&format!(
             "header = \"Authorization: Bearer {}\"\n",
             quote(&secret)?
@@ -195,7 +194,7 @@ pub(crate) fn request(
                 "conversation unavailable, deleted or inaccessible"
             }
             "invalid_auth" | "not_authed" | "token_revoked" | "token_expired" => {
-                "Slack token is missing, invalid or expired; set MEMCASTLE_SLACK_BOT_TOKEN or MEMCASTLE_SLACK_USER_TOKEN on the daemon"
+                "Slack token is missing, invalid or expired; configure an env or file credential on the selected source configuration"
             }
             "no_permission" | "ekm_access_denied" => "Slack token has insufficient permissions",
             "ratelimited" => "Slack rate limit reached; retry later",
@@ -220,7 +219,7 @@ mod tests {
         let error =
             request(&source, "conversations.info", &[("channel", "C000000001")]).unwrap_err();
         assert!(error.contains("inaccessible"), "{error}");
-        assert!(!error.contains("fixture-token"));
+        assert!(!error.contains("fixture-work"));
         let limited =
             request(&source, "conversations.info", &[("channel", "C000000003")]).unwrap_err();
         assert!(limited.contains("60 seconds"), "{limited}");

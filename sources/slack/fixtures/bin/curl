@@ -1,10 +1,14 @@
 #!/usr/bin/env python3
 """Offline Slack replies for native and WASM source conformance. Never contact Slack."""
 import json
+import os
 import sys
 from urllib.parse import parse_qs, urlparse
 
 config = sys.stdin.read()
+if any(name.startswith('MEMCASTLE_SLACK_') and name.endswith('_TOKEN') for name in os.environ):
+    # The selected credential may reach curl through stdin, never its environment.
+    sys.exit(21)
 try:
     url = next(line.split('"', 2)[1] for line in config.splitlines() if line.startswith('url = "'))
 except (IndexError, StopIteration):
@@ -14,6 +18,8 @@ method = parsed.path.rsplit('/', 1)[-1]
 params = parse_qs(parsed.query)
 channel = params.get('channel', [''])[0]
 root = params.get('ts', [''])[0]
+auth = next((line for line in config.splitlines() if line.startswith('header = "Authorization: Bearer ')), None)
+token = auth.split('Bearer ', 1)[1].split('"', 1)[0] if auth else 'fixture-offline'
 
 first = {'type': 'message', 'ts': '1760000000.000001', 'user': 'U123456789', 'text': 'Plan the release', 'reply_count': 1}
 reply = {'type': 'message', 'ts': '1760000001.000001', 'thread_ts': first['ts'], 'user': 'U987654321', 'text': 'Ship on Friday'}
@@ -22,9 +28,19 @@ if channel == 'D123456789':
     first = {**first, 'text': 'Private check-in'}
     reply = {**reply, 'text': 'Private decision'}
     second = {**second, 'text': 'Private status'}
+if token == 'fixture-personal' and channel == 'D123456789':
+    first = {**first, 'text': 'Personal check-in'}
+    reply = {**reply, 'text': 'Personal decision'}
+    second = {**second, 'text': 'Personal status'}
 status = 200
-if method == 'auth.test':
-    result = {'ok': True, 'team_id': 'T123456789', 'user_id': 'U000000001'}
+if token not in ('fixture-offline', 'fixture-work', 'fixture-other-bot', 'fixture-personal'):
+    result = {'ok': False, 'error': 'invalid_auth'}
+elif method == 'auth.test':
+    result = {'ok': True, 'team_id': 'T987654321' if token == 'fixture-personal' else 'T123456789', 'user_id': 'U000000001'}
+elif token == 'fixture-personal' and channel != 'D123456789':
+    result = {'ok': False, 'error': 'not_in_channel'}
+elif token == 'fixture-work' and channel == 'G123456789':
+    result = {'ok': False, 'error': 'not_in_channel'}
 elif channel == 'C000000003':
     status = 429
     result = {'ok': False, 'error': 'ratelimited'}

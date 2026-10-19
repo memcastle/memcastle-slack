@@ -15,7 +15,7 @@ retains_raw = true
 needs_credentials = true
 
 [permissions]
-env = ["MEMCASTLE_SLACK_BOT_TOKEN", "MEMCASTLE_SLACK_USER_TOKEN"]
+credential = true
 process = ["curl"]
 
 [options.account]
@@ -28,7 +28,7 @@ description = "exact Slack workspace/team ID (T...), alternatively a locator"
 
 [options.auth_mode]
 type = "string"
-description = "bot or user; selects the temporary daemon credential variable"
+description = "bot or user; declares which kind of selected Slack token this account uses"
 
 [options.conversations]
 type = "string"
