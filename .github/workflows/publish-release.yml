@@ -1,56 +1,61 @@
 name: 📦 Publish release
 
 on:
-  push:
-    tags:
-      - 'slack/v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        required: true
+        type: string
 
 permissions:
   contents: read
 
 jobs:
   validate:
-    name: 🧪 Validate release
+    name: 🧪 Validate release archive
     uses: ./.github/workflows/ci.yaml
+    with:
+      tag: ${{ inputs.tag }}
 
   publish:
-    name: 🚀 Publish
     needs: validate
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    environment:
+      name: release
+      url: ${{ github.server_url }}/${{ github.repository }}/releases/tag/${{ inputs.tag }}
     steps:
       - uses: actions/checkout@v7
         with:
+          ref: ${{ inputs.tag }}
           fetch-depth: 0
           persist-credentials: false
       - uses: memcastle/memcastle@main
         with:
           version: main
-      - name: Require a reviewed version tag on main
+      - name: Require reviewed tag on main and existing draft
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
         run: |
           set -euo pipefail
           expected="$(memcastle plugin inspect --json | jq -r '.plugin | "\(.id)/v\(.version)"')"
-          test "$GITHUB_REF_NAME" = "$expected" || { echo '::error::tag does not match plugin.toml'; exit 1; }
+          test "$TAG" = "$expected" || { echo '::error::tag does not match plugin.toml'; exit 1; }
           git fetch origin main
           git merge-base --is-ancestor HEAD origin/main || { echo '::error::tag must be on main'; exit 1; }
-          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            echo '::error::release already exists; publish a new version tag'
-            exit 1
-          fi
+          test "$(gh release view "$TAG" --json isDraft --jq .isDraft)" = true
       - uses: actions/download-artifact@v8
         with:
           name: plugin-package
-      - name: Publish this provider's validated archive
+      - name: Upload validated archive
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
         run: |
           set -euo pipefail
-          tag="$GITHUB_REF_NAME"
-          archive="dist/${tag%/v*}-${tag##*/v}.tar.gz"
+          archive="dist/${TAG%/v*}-${TAG##*/v}.tar.gz"
           test -s "$archive"
           checksum="${archive%.tar.gz}.sha256sum"
           test -s "$checksum"
-          gh release create "$tag" "$archive" "$checksum" --generate-notes
+          gh release upload "$TAG" "$archive" "$checksum" --clobber

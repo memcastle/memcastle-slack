@@ -7,10 +7,15 @@
 source = "https://github.com/memcastle/memcastle-plugin.tpl"
 
 [answers]
-codecov = false
+codecov = true
+codecov_covered_sources = ["slack"]
+codecov_integration_target = "80%"
+codecov_patch_target = "80%"
+codecov_project_target = "80%"
+codecov_source_target = "80%"
 core_versions = ["main"]
 description = "Scoped Slack conversation history source"
-gh_ship = false
+gh_ship = true
 github_owner = "memcastle"
 integration_template = "https://github.com/memcastle/memcastle-integration.tpl"
 integrations = []
@@ -18,6 +23,7 @@ memcastle = ">=0.4, <0.6"
 plugin_id = "slack"
 provider = "slack"
 repository_name = "memcastle-slack"
+ship_token = "app"
 source_template = "https://github.com/memcastle/memcastle-source.tpl"
 sources = ["slack"]
 

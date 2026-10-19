@@ -24,6 +24,8 @@ jobs:
     permissions:
       contents: read
 
+      id-token: write
+
     strategy:
       fail-fast: false
       matrix:
@@ -36,6 +38,10 @@ jobs:
         with:
           targets: wasm32-wasip2
 
+          components: llvm-tools-preview
+      - uses: taiki-e/install-action@cargo-llvm-cov
+      - uses: taiki-e/install-action@nextest
+
       - uses: Swatinem/rust-cache@v2
       - name: Check source formatting and warnings
         env:
@@ -44,10 +50,33 @@ jobs:
           cargo fmt --manifest-path "sources/$MODULE/Cargo.toml" --all -- --check
           cargo clippy --manifest-path "sources/$MODULE/Cargo.toml" --locked --target wasm32-wasip2 -- -D warnings
 
-      - name: Test source natively
+      - name: Run source tests with coverage and JUnit
+        id: source-tests
         env:
           MODULE: ${{ matrix.source }}
-        run: cargo test --manifest-path "sources/$MODULE/Cargo.toml" --locked --lib
+        run: |
+          cd "sources/$MODULE"
+          cargo llvm-cov nextest --locked --config-file "$GITHUB_WORKSPACE/.config/nextest.toml" --no-tests=pass --lib
+          if grep -q '<testcase' target/nextest/default/junit.xml; then
+            mkdir -p coverage
+            cargo llvm-cov report --lcov --output-path coverage/lcov.info
+            echo 'has_tests=true' >> "$GITHUB_OUTPUT"
+          fi
+      - uses: codecov/codecov-action@v7
+        if: ${{ steps.source-tests.outputs.has_tests == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+        with:
+          files: sources/${{ matrix.source }}/coverage/lcov.info
+          flags: source-${{ matrix.source }}
+          use_oidc: true
+          fail_ci_if_error: true
+      - uses: codecov/codecov-action@v7
+        if: ${{ steps.source-tests.outputs.has_tests == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+        with:
+          files: sources/${{ matrix.source }}/target/nextest/default/junit.xml
+          flags: source-${{ matrix.source }}
+          report_type: test_results
+          use_oidc: true
+          fail_ci_if_error: true
 
       - name: Build reproducible source component
         env:

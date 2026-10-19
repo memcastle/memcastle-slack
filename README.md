@@ -1,6 +1,6 @@
 # memcastle-slack
 
-[![CI](https://github.com/memcastle/memcastle-slack/actions/workflows/ci.yaml/badge.svg?branch=main)](https://github.com/memcastle/memcastle-slack/actions/workflows/ci.yaml)
+[![CI](https://github.com/memcastle/memcastle-slack/actions/workflows/ci.yaml/badge.svg?branch=main)](https://github.com/memcastle/memcastle-slack/actions/workflows/ci.yaml) [![Codecov](https://codecov.io/gh/memcastle/memcastle-slack/graph/badge.svg)](https://codecov.io/gh/memcastle/memcastle-slack)
 
 Standalone MemCastle plugin for explicitly scoped Slack conversation and thread history. Supports independently selected bot and user Web API tokens from named source configurations; credentials stay outside plugin configuration and memory. Requires a Core build with [PR #335](https://github.com/memcastle/memcastle/pull/335). See [the source guide](sources/slack/README.md) for Slack app scopes, installation, multiple accounts and independently routed miners.
 
@@ -25,4 +25,15 @@ memcastle plugin test dist/slack-VERSION.tar.gz
 node scripts/smoke_miners.mjs
 ```
 
-The archive in `dist/` includes the source component and an immutable manifest assembled by Core. `plugin.toml` describes stable IDs, source paths and compatibility; `sources/slack/Cargo.lock` locks source dependencies. CI and release workflows build and validate the exact artifact against Core's `main` development prerelease through its shared plugin-validation workflow; its extra smoke test covers two miners sharing one bot account plus a second bot account and a user file credential. No live Slack workspace is required by the offline fixtures. Set `MEMCASTLE_BIN=/path/to/current/memcastle` when the default CLI is older than the plugin contract.
+The archive in `dist/` includes the source component and a generated manifest; `plugin.toml` describes stable module IDs and paths, and `sources/slack/Cargo.lock` locks source dependencies.
+CI builds the exact artifact and validates it against Core's `main` development prerelease through the shared plugin-validation workflow.
+Its extra smoke test covers two miners sharing one bot account, a second bot account and a user file credential.
+No live Slack workspace is needed for the offline fixtures.
+Set `MEMCASTLE_BIN=/path/to/current/memcastle` when the default CLI predates the source-credential contract.
+
+Native Rust tests upload LCOV coverage and JUnit results to Codecov using GitHub OIDC.
+The repository's `.github/codecov.yml` defines project, patch and source-module coverage checks.
+
+Releases use gh-ship and git-cliff: a releasable Conventional Commit on `main` opens a `release/next` PR.
+Merging that PR publishes the validated `slack/vVERSION` archive.
+The `release` environment supplies the GitHub App variable `APP_CLIENT_ID` and secret `APP_PRIVATE_KEY` to these workflows.

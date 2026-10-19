@@ -1,0 +1,41 @@
+coverage:
+  status:
+    project:
+      default:
+        target: "80%"
+        threshold: 0%
+    patch:
+      default:
+        target: "80%"
+        threshold: 0%
+
+# Each flag names the same typed module as the matching CI upload.
+# A missing report is not carried forward from an earlier commit.
+flags:
+
+  source-slack:
+    paths: ["sources/slack/src/**"]
+    carryforward: false
+
+
+
+# Components describe actual file ownership, independently of upload flags.
+# Modules without native coverage stay visible without becoming failing gates.
+component_management:
+  individual_components:
+
+    - component_id: source-slack
+      name: Source slack
+      paths: ["sources/slack/src/**"]
+      statuses:
+        - type: project
+
+          target: "80%"
+          threshold: 0%
+
+
+
+
+comment:
+  layout: reach,diff,flags,components,files
+  require_changes: false
