@@ -92,6 +92,7 @@ Merging the release PR publishes a validated `slack/vVERSION` archive as a GitHu
 
 Configure the `release` environment with variable `APP_CLIENT_ID`
 and secret `APP_PRIVATE_KEY` for an App installed on this repository.
+The publish workflow uses this credential to check the draft release and upload its validated archive.
 Grant contents, actions and pull requests write permission;
 issues write is needed to create the release label.
 

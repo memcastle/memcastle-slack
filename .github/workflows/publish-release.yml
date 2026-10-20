@@ -13,6 +13,11 @@ permissions:
 jobs:
   validate:
     name: 🧪 Validate release archive
+
+    permissions:
+      contents: read
+      id-token: write
+
     uses: ./.github/workflows/ci.yaml
     with:
       tag: ${{ inputs.tag }}
@@ -26,6 +31,13 @@ jobs:
       name: release
       url: ${{ github.server_url }}/${{ github.repository }}/releases/tag/${{ inputs.tag }}
     steps:
+
+      - uses: actions/create-github-app-token@v3
+        id: app-token
+        with:
+          client-id: ${{ vars.APP_CLIENT_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+
       - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.tag }}
@@ -36,7 +48,7 @@ jobs:
           version: development
       - name: Require reviewed tag on main and existing draft
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
           TAG: ${{ inputs.tag }}
         run: |
           set -euo pipefail
@@ -50,7 +62,7 @@ jobs:
           name: plugin-package
       - name: Upload validated archive
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
           TAG: ${{ inputs.tag }}
         run: |
           set -euo pipefail
