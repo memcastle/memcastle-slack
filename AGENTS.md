@@ -8,6 +8,7 @@
 - Source implementations and tests live under `sources/<id>/`.
   Commit `Cargo.lock` and build `source.wasm` before packaging.
 - This render has no agent integrations.
+- This render has no embedding providers.
 - Check affected modules, then run `memcastle plugin package` and `memcastle plugin test`
   on the resulting archive. Use a plugin-capable Core binary.
   Keep the coverage-reporting module lists in template answers
