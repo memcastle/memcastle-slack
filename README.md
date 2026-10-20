@@ -55,7 +55,7 @@ Replace `VERSION` with the archive version in `dist/`. Packaging includes the so
 
 ## CI and releases
 
-CI validates the exact artifact against Core `development` with the shared plugin-validation workflow.
+CI validates the exact artifact against Core `development` and `0.5` with the shared plugin-validation workflow.
 The Core setup action checks the binary against `SHA256SUMS`; an extra offline smoke covers miners sharing
 one bot account, a second bot account and a user file credential. No live Slack workspace is needed.
 
