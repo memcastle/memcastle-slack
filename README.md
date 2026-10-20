@@ -65,6 +65,7 @@ The repository's `.github/codecov.yml` defines the project, patch and source-mod
 gh-ship and git-cliff open a reviewed `release/next` PR for releasable commits. After it merges,
 the validated `slack/vVERSION` archive is published. Configure `APP_CLIENT_ID` and `APP_PRIVATE_KEY` in
 the `release` environment for an installed GitHub App.
+The publish workflow uses this credential to check the draft release and upload its validated archive.
 
 ## Contributing
 
