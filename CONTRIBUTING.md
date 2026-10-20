@@ -16,7 +16,7 @@ and build its component to `sources/<id>/source.wasm` before packaging.
 ## Check a change
 
 Install a plugin-capable MemCastle Core binary.
-For sources, install Rust with the `wasm32-wasip2` target.
+For source and embedding modules, install Rust with the `wasm32-wasip2` target.
 
 Run the affected module's tests and build, then from the project root:
 

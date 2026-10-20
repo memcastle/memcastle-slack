@@ -32,7 +32,7 @@ After installation, explicitly enable the sources you want to use.
 
 You'll need a plugin-capable MemCastle Core binary and Git.
 
-Install Rust with the `wasm32-wasip2` target for source modules.
+Install Rust with the `wasm32-wasip2` target for source and embedding modules.
 
 For each source, run its tests, build the Wasm component and copy the compiled component
 to `sources/<id>/source.wasm`.
@@ -75,7 +75,7 @@ Outside a Git checkout, pass `--version` when packaging.
 
 CI builds the modules that exist, packages the plugin and validates its archive against MemCastle Core.
 
-The `core_versions` answer defaults to `development`, the currently available compatibility choice.
+The `core_versions` answer defaults to `development` and `0.5` (the latest stable patch in the 0.5 release tree).
 Validation runs on pull requests and pushes to `main`.
 
 When modules have native tests, their jobs upload available LCOV and JUnit results to Codecov using OIDC.
