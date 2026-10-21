@@ -59,7 +59,7 @@ The package command reads `plugin.toml` and creates an archive with its own vers
 plus a matching `.sha256sum` file.
 It does not rewrite `plugin.toml` or create a root-level `manifest.toml`.
 
-A `slack/vVERSION` tag supplies a release version;
+A `VERSION` SemVer tag supplies a release version;
 untagged Git commits get a development version.
 Outside a Git checkout, pass `--version` when packaging.
 
@@ -88,7 +88,7 @@ have blocking component coverage checks.
 
 Releases use gh-ship and git-cliff:
 merging a releasable Conventional Commit into `main` opens a `release/next` PR.
-Merging the release PR publishes a validated `slack/vVERSION` archive as a GitHub Release.
+Merging the release PR publishes a validated `slack-VERSION.tar.gz` archive under the `VERSION` Git tag.
 
 Configure the `release` environment with variable `APP_CLIENT_ID`
 and secret `APP_PRIVATE_KEY` for an App installed on this repository.
