@@ -1,4 +1,4 @@
-# A plugin release tag has a stable provider prefix; its module versions are independent.
+# Each repository releases its plugin independently using bare SemVer tags.
 [changelog]
 header = "# Changelog\n\n"
 body = """
@@ -17,7 +17,7 @@ footer = ""
 conventional_commits = true
 filter_unconventional = true
 filter_commits = false
-tag_pattern = "^slack/v[0-9]+\\.[0-9]+\\.[0-9]+$"
+tag_pattern = "^[0-9]+\\.[0-9]+\\.[0-9]+$"
 commit_parsers = [
   { message = "^chore\\(release\\):", skip = true },
   { message = "^feat", group = "Features" },
@@ -30,4 +30,4 @@ commit_parsers = [
 ]
 
 [bump]
-initial_tag = "slack/v0.1.0"
+initial_tag = "0.1.0"
