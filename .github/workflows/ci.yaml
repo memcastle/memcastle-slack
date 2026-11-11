@@ -147,7 +147,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        core: ["development", "0.5"]
+        # Reconciliation landed after the stable binary also labeled 0.5.2.
+        core: ["development"]
     uses: memcastle/memcastle/.github/workflows/plugin-validation.yaml@main
     with:
       artifact-name: plugin-package

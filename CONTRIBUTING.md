@@ -9,8 +9,8 @@ Start with the [README](README.md) for installation, packaging and release basic
 `plugin.toml` is the root descriptor of the plugin and its module IDs and paths.
 Keep those IDs stable when changing an implementation.
 
-The only module is `slack`. Preserve its scoped channel/thread cursors and independently selected bot and user
-credentials; review process and environment permissions and Core's selected-credential contract together.
+The only module is `slack`. Preserve its stable thread IDs, Core-owned reconciliation inventory, restart-safe
+page checkpoints and independently selected bot/user credentials. Mutable selectors must not change provider identity.
 
 Rust/Wasm sources live under `sources/<id>/`.
 Follow each module's README and tests, commit its `Cargo.lock`,
@@ -18,7 +18,8 @@ and build its component to `sources/<id>/source.wasm` before packaging.
 
 ## Check a change
 
-Install a plugin-capable MemCastle Core binary.
+Install development Core containing `c311d09` (Core #378) or a verified descendant. Older stable `0.5.2`
+binaries lack reconciliation support; the source requires extension `0.1.0` on base contract `0.4.0`.
 For source and embedding modules, install Rust with the `wasm32-wasip2` target.
 
 Run the affected module's tests and build, then from the project root:
@@ -35,7 +36,8 @@ The package command generates the archive's versioned `manifest.toml` and an ext
 do not commit generated archives or rewrite `plugin.toml` to add release versions or checksums.
 
 CI builds and tests the configured module types and validates the package against the selected Core matrix.
-The offline miner smoke checks independent account routing without access to a live Slack workspace.
+The offline installed-archive smoke checks independent account routing, identical-destination miner isolation,
+retirement/restoration and retained histories without access to a live Slack workspace.
 
 If you add native tests that produce nonempty LCOV,
 update the `codecov_covered_sources` or `codecov_covered_integrations` template answers as applicable

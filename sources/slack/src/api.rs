@@ -4,6 +4,65 @@ use serde_json::Value;
 
 use crate::SourceRef;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Failure {
+    Other,
+    Authentication,
+    MissingScope,
+    RateLimited,
+    Permission,
+    Transport,
+    AccessLost,
+    Removed,
+    Missing,
+    InvalidCursor,
+}
+
+#[derive(Debug)]
+pub(crate) struct Error {
+    pub kind: Failure,
+    message: String,
+}
+
+impl Error {
+    pub(crate) fn removed() -> Self {
+        Self::new(
+            Failure::Removed,
+            "Slack root has an explicit deletion marker",
+        )
+    }
+    pub(crate) fn missing(message: &str) -> Self {
+        Self::new(Failure::Missing, message)
+    }
+    fn new(kind: Failure, message: &str) -> Self {
+        Self {
+            kind,
+            message: message.into(),
+        }
+    }
+}
+
+impl std::fmt::Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl From<String> for Error {
+    fn from(message: String) -> Self {
+        Self {
+            kind: Failure::Other,
+            message,
+        }
+    }
+}
+
+impl From<&str> for Error {
+    fn from(message: &str) -> Self {
+        message.to_string().into()
+    }
+}
+
 #[cfg(not(test))]
 fn run_process(
     program: &str,
@@ -48,23 +107,26 @@ fn run_process(
 }
 
 // Core resolves the selected configuration's env/file reference before executing the job.
-// Conformance has no job credential: its offline curl stand-in accepts an absent header,
-// while Slack itself returns `not_authed` and cannot provide any live data without one.
+// Generic conformance supplies Core's fixed synthetic selected credential.
 #[cfg(not(test))]
-fn token(_source: &SourceRef) -> Option<String> {
-    crate::memcastle::source::host::source_credential().ok()
+fn token(_source: &SourceRef) -> Result<String, Error> {
+    crate::memcastle::source::host::source_credential().map_err(|_| {
+        Error::new(
+            Failure::Authentication,
+            "selected Slack credential is unavailable",
+        )
+    })
 }
 
 #[cfg(test)]
-fn token(source: &SourceRef) -> Option<String> {
-    Some(
-        match crate::option(source, "account") {
-            Some("other-bot") => "fixture-other-bot",
-            Some("personal-user") if source.locator == "T987654321" => "fixture-personal",
-            _ => "fixture-work",
-        }
-        .into(),
-    )
+fn token(source: &SourceRef) -> Result<String, Error> {
+    Ok(match crate::option(source, "account") {
+        Some(scenario) if scenario.starts_with("fixture-") => scenario,
+        Some("other-bot") => "fixture-other-bot",
+        Some("personal-user") if source.locator == "T987654321" => "fixture-personal",
+        _ => "fixture-work",
+    }
+    .into())
 }
 
 fn quote(value: &str) -> Result<String, String> {
@@ -90,7 +152,7 @@ pub(crate) fn request(
     source: &SourceRef,
     method: &str,
     params: &[(&str, &str)],
-) -> Result<Value, String> {
+) -> Result<Value, Error> {
     if !matches!(
         method,
         "auth.test" | "conversations.info" | "conversations.history" | "conversations.replies"
@@ -114,7 +176,8 @@ pub(crate) fn request(
         "url = \"{}\"\nheader = \"Accept: application/json\"\n",
         quote(&address)?
     );
-    if let Some(secret) = token(source) {
+    {
+        let secret = token(source)?;
         config.push_str(&format!(
             "header = \"Authorization: Bearer {}\"\n",
             quote(&secret)?
@@ -138,11 +201,13 @@ pub(crate) fn request(
             "\nMEMCASTLE_HTTP_STATUS:%{http_code}".into(),
         ],
         Some(config.as_bytes()),
-    )?;
+    )
+    .map_err(|message| Error::new(Failure::Transport, &message))?;
     if output.status != 0 {
-        return Err(
-            "Slack request failed; check connectivity, token and daemon curl installation".into(),
-        );
+        return Err(Error::new(
+            Failure::Transport,
+            "Slack request failed; check connectivity, token and daemon curl installation",
+        ));
     }
     let output = String::from_utf8(output.stdout).map_err(|_| "Slack response was not UTF-8")?;
     let (payload, status) = output
@@ -162,21 +227,33 @@ pub(crate) fn request(
                     .strip_prefix("retry-after:")
                     .and_then(|value| value.trim().parse::<u32>().ok())
             });
-            return Err(match retry {
-                Some(seconds) => format!("Slack rate limit reached; retry after {seconds} seconds"),
-                None => "Slack rate limit reached; retry later".into(),
-            });
+            return Err(Error::new(
+                Failure::RateLimited,
+                &match retry {
+                    Some(seconds) => {
+                        format!("Slack rate limit reached; retry after {seconds} seconds")
+                    }
+                    None => "Slack rate limit reached; retry later".into(),
+                },
+            ));
         }
-        "401" | "403" => {
-            return Err(
-                "Slack denied the request; check token, scopes and conversation access".into(),
-            );
+        "401" => {
+            return Err(Error::new(
+                Failure::Authentication,
+                "Slack denied authentication; check the selected token",
+            ));
+        }
+        "403" => {
+            return Err(Error::new(
+                Failure::Permission,
+                "Slack denied the request; check token, scopes and conversation access",
+            ));
         }
         "404" => return Err("Slack conversation is unavailable or inaccessible".into()),
         code => {
-            return Err(format!(
-                "Slack API returned HTTP {code}; retry or check API availability"
-            ));
+            return Err(
+                format!("Slack API returned HTTP {code}; retry or check API availability").into(),
+            );
         }
     }
     let response: Value =
@@ -187,20 +264,37 @@ pub(crate) fn request(
             .and_then(Value::as_str)
             .unwrap_or("unknown");
         // Strict allowlist: Slack's error field is service data and must not leak private content.
-        let message = match error {
-            "missing_scope" => "missing_scope: grant the required conversation read/history scope",
-            "not_in_channel" => "not_in_channel: join or select an accessible conversation",
-            "channel_not_found" | "invalid_channel" => {
-                "conversation unavailable, deleted or inaccessible"
+        let (kind, message) = match error {
+            "not_in_channel" => (
+                Failure::AccessLost,
+                "not_in_channel: conversation access lost",
+            ),
+            "channel_not_found" | "thread_not_found" => {
+                (Failure::Missing, "Slack object is absent or inaccessible")
             }
-            "invalid_auth" | "not_authed" | "token_revoked" | "token_expired" => {
-                "Slack token is missing, invalid or expired; configure an env or file credential on the selected source configuration"
-            }
-            "no_permission" | "ekm_access_denied" => "Slack token has insufficient permissions",
-            "ratelimited" => "Slack rate limit reached; retry later",
-            _ => "Slack API refused the request; inspect app permissions and selected conversation",
+            "invalid_cursor" => (Failure::InvalidCursor, "Slack pagination cursor expired"),
+            "missing_scope" => (
+                Failure::MissingScope,
+                "missing_scope: grant the required conversation read/history scope",
+            ),
+            "invalid_auth" | "not_authed" | "token_revoked" | "token_expired" => (
+                Failure::Authentication,
+                "Slack token is missing, invalid or expired; configure an env or file credential on the selected source configuration",
+            ),
+            "no_permission" | "ekm_access_denied" => (
+                Failure::Permission,
+                "Slack token has insufficient permissions",
+            ),
+            "ratelimited" => (
+                Failure::RateLimited,
+                "Slack rate limit reached; retry later",
+            ),
+            _ => (
+                Failure::Other,
+                "Slack API refused the request; inspect app permissions and selected conversation",
+            ),
         };
-        return Err(message.into());
+        return Err(Error::new(kind, message));
     }
     Ok(response)
 }
@@ -218,13 +312,16 @@ mod tests {
         assert!(request(&source, "conversations.info", &[("bad\nheader", "value")]).is_err());
         let error =
             request(&source, "conversations.info", &[("channel", "C000000001")]).unwrap_err();
-        assert!(error.contains("inaccessible"), "{error}");
-        assert!(!error.contains("fixture-work"));
+        assert!(error.to_string().contains("inaccessible"), "{error}");
+        assert!(!error.to_string().contains("fixture-work"));
         let limited =
             request(&source, "conversations.info", &[("channel", "C000000003")]).unwrap_err();
-        assert!(limited.contains("60 seconds"), "{limited}");
+        assert!(limited.to_string().contains("60 seconds"), "{limited}");
         let permission =
             request(&source, "conversations.info", &[("channel", "C000000002")]).unwrap_err();
-        assert!(permission.contains("missing_scope"), "{permission}");
+        assert!(
+            permission.to_string().contains("missing_scope"),
+            "{permission}"
+        );
     }
 }

@@ -1,0 +1,8 @@
+{
+  "name": "filtered-history-page-checkpoints",
+  "description": "Three service-event-only pages persist progress without synthetic documents",
+  "opaque_locator": "T123456789",
+  "options": {"account": "work", "auth_mode": "bot", "conversations": "C000000010"},
+  "limit": 1,
+  "documents": []
+}

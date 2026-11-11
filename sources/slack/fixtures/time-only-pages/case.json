@@ -1,0 +1,8 @@
+{
+  "name": "timestamp-only-history-continuation",
+  "description": "Nonempty has_more pages advance by timestamp without an opaque cursor",
+  "opaque_locator": "T123456789",
+  "options": {"account": "work", "auth_mode": "bot", "conversations": "C000000014"},
+  "limit": 1,
+  "documents": []
+}

@@ -1,0 +1,15 @@
+{
+  "name": "deleted-reply-preserves-thread",
+  "description": "A complete thread with a deleted reply still produces the root document",
+  "opaque_locator": "T123456789",
+  "options": {"account": "work", "auth_mode": "bot", "conversations": "C000000013", "threads": "C000000013:1760000000.000001"},
+  "limit": 1,
+  "documents": [{
+    "external_id": "C000000013:1760000000.000001",
+    "title": "general · 1760000000.000001",
+    "kind": "transcript",
+    "room": "conversations",
+    "tags": ["slack", "conversation:C000000013", "kind:channel"],
+    "segments": ["[1760000000.000001] U123456789: Plan the release"]
+  }]
+}

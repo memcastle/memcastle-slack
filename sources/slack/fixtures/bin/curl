@@ -3,6 +3,8 @@
 import json
 import os
 import sys
+from pathlib import Path
+from decimal import Decimal
 from urllib.parse import parse_qs, urlparse
 
 config = sys.stdin.read()
@@ -19,11 +21,21 @@ params = parse_qs(parsed.query)
 channel = params.get('channel', [''])[0]
 root = params.get('ts', [''])[0]
 auth = next((line for line in config.splitlines() if line.startswith('header = "Authorization: Bearer ')), None)
-token = auth.split('Bearer ', 1)[1].split('"', 1)[0] if auth else 'fixture-offline'
+token = auth.split('Bearer ', 1)[1].split('"', 1)[0] if auth else ''
+# Installed-archive smoke copies this executable to a temporary directory and
+# changes this file between completed jobs. Core need not grant extra WASI access.
+state_file = Path(__file__).with_name('fixture-state.json')
+state = json.loads(state_file.read_text()) if state_file.exists() else {}
+scenario = state.get('scenario', token.removeprefix('fixture-'))
+scenario = {'C000000010': 'filtered', 'C000000011': 'retention',
+            'C000000012': 'archived', 'C000000013': 'deleted-reply',
+            'C000000014': 'time-only-filtered'}.get(channel, scenario)
 
 first = {'type': 'message', 'ts': '1760000000.000001', 'user': 'U123456789', 'text': 'Plan the release', 'reply_count': 1}
 reply = {'type': 'message', 'ts': '1760000001.000001', 'thread_ts': first['ts'], 'user': 'U987654321', 'text': 'Ship on Friday'}
 second = {'type': 'message', 'ts': '1760000002.000001', 'user': 'U123456789', 'text': 'Status update'}
+if scenario == 'edit':
+    reply = {**reply, 'text': 'Ship on Monday', 'edited': {'ts': '1760001000.000001'}}
 if channel == 'D123456789':
     first = {**first, 'text': 'Private check-in'}
     reply = {**reply, 'text': 'Private decision'}
@@ -33,10 +45,20 @@ if token == 'fixture-personal' and channel == 'D123456789':
     reply = {**reply, 'text': 'Personal decision'}
     second = {**second, 'text': 'Personal status'}
 status = 200
-if token not in ('fixture-offline', 'fixture-work', 'fixture-other-bot', 'fixture-personal'):
+if not token or token == 'fixture-invalid' or scenario == 'invalid':
     result = {'ok': False, 'error': 'invalid_auth'}
 elif method == 'auth.test':
-    result = {'ok': True, 'team_id': 'T987654321' if token == 'fixture-personal' else 'T123456789', 'user_id': 'U000000001'}
+    result = {'ok': True, 'team_id': 'T987654321' if token == 'fixture-personal' or scenario == 'wrong-workspace' else 'T123456789', 'user_id': 'U000000001'}
+elif scenario == 'missing-scope':
+    result = {'ok': False, 'error': 'missing_scope'}
+elif scenario == 'lost-access':
+    result = {'ok': False, 'error': 'not_in_channel'}
+elif scenario == 'http-forbidden':
+    status = 403
+    result = {'ok': False, 'error': 'no_permission'}
+elif scenario == 'rate-limit':
+    status = 429
+    result = {'ok': False, 'error': 'ratelimited'}
 elif token == 'fixture-personal' and channel != 'D123456789':
     result = {'ok': False, 'error': 'not_in_channel'}
 elif token == 'fixture-work' and channel == 'G123456789':
@@ -48,20 +70,68 @@ elif channel == 'C000000002':
     result = {'ok': False, 'error': 'missing_scope'}
 elif channel == 'C000000001':
     result = {'ok': False, 'error': 'channel_not_found'}
-elif channel not in ('C123456789', 'D123456789', 'G123456789', 'C000000004'):
+elif channel not in ('C123456789', 'D123456789', 'G123456789', 'C000000004',
+                     'C000000010', 'C000000011', 'C000000012', 'C000000013', 'C000000014'):
     result = {'ok': False, 'error': 'not_in_channel'}
 elif method == 'conversations.info':
     result = {'ok': True, 'channel': {'id': channel, 'name': 'general' if channel[0] == 'C' else channel,
                                       'is_member': True, 'is_channel': channel[0] == 'C',
+                                      'is_archived': scenario == 'archived',
                                       'is_im': channel[0] == 'D', 'is_mpim': channel[0] == 'G'}}
 elif method == 'conversations.history':
-    oldest = float(params.get('oldest', ['0'])[0])
-    latest = float(params.get('latest', ['9999999999'])[0])
-    messages = [m for m in (second, first) if oldest <= float(m['ts']) <= latest]
-    result = {'ok': True, 'messages': messages, 'has_more': channel == 'C000000004', 'response_metadata': {'next_cursor': ''}}
+    oldest = Decimal(params.get('oldest', ['0'])[0])
+    latest = Decimal(params.get('latest', ['9999999999'])[0])
+    history = [second, first]
+    if scenario in ('backlog', 'filtered', 'empty-continuation', 'expired-cursor', 'time-only', 'time-only-filtered'):
+        history = [{**first, 'ts': f'17600000{i:02d}.000001',
+                    **({'subtype': 'channel_join'} if i >= 20 or scenario in ('filtered', 'time-only-filtered') else {})}
+                   for i in range(39, -1, -1)]
+    messages = [m for m in history if oldest <= Decimal(m['ts']) <= latest]
+    more = len(messages) > 15
+    messages = messages[:15]
+    next_cursor = 'page-next' if more else ''
+    if scenario.startswith('time-only'):
+        next_cursor = ''
+    if channel == 'C000000004':
+        messages = []  # genuinely incomplete: no timestamp progress or continuation hint
+    if scenario in ('empty-continuation', 'expired-cursor') and not params.get('cursor'):
+        messages, more, next_cursor = [], True, 'empty-page'
+    result = {'ok': True, 'messages': messages, 'has_more': more or channel == 'C000000004', 'response_metadata': {'next_cursor': next_cursor}}
+    if scenario == 'expired-cursor' and params.get('cursor'):
+        result = {'ok': False, 'error': 'invalid_cursor'}
 elif method == 'conversations.replies':
     messages = [first, reply] if root == first['ts'] else [second] if root == second['ts'] else []
+    if scenario == 'deleted-reply':
+        messages = [m for m in messages if m['ts'] != reply['ts']]
+        messages = [{**m, 'reply_count': 0} if m['ts'] == first['ts'] else m for m in messages]
+    if scenario == 'truncated':
+        messages = [first]  # claims one reply but silently omits it without has_more
+    if scenario == 'removed' and root == first['ts']:
+        messages = [{**first, 'subtype': 'message_deleted'}]
+    if scenario == 'empty-thread':
+        messages = []
     result = {'ok': True, 'messages': messages, 'has_more': False, 'response_metadata': {'next_cursor': ''}}
+    if scenario == 'missing-thread':
+        result = {'ok': False, 'error': 'thread_not_found'}
+    if scenario == 'retention':
+        result['is_limited'] = True
+    if scenario in ('partial', 'failed-first'):
+        result['has_more'] = True
+    if scenario == 'repeat-page':
+        result['has_more'] = True
+        result['response_metadata']['next_cursor'] = 'same-page'
+    if scenario.startswith('paged-replies') and root == first['ts']:
+        replies = [{**reply, 'ts': f'17600001{i:02d}.000001', 'text': f'Paged reply {i}'} for i in range(21)]
+        if scenario == 'paged-replies-edit':
+            replies[-1] = {**replies[-1], 'text': 'Edited later-page reply', 'edited': {'ts': '1760002000.000001'}}
+        if scenario == 'paged-replies-deleted':
+            replies.pop()
+        all_messages = [{**first, 'reply_count': len(replies)}, *replies]
+        offset = int(params.get('cursor', ['replies:0'])[0].split(':')[1])
+        end = offset + 15
+        more = end < len(all_messages)
+        result = {'ok': True, 'messages': all_messages[offset:end], 'has_more': more,
+                  'response_metadata': {'next_cursor': f'replies:{end}' if more else ''}}
 else:
     result = {'ok': False, 'error': 'invalid_arguments'}
 

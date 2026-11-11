@@ -15,7 +15,6 @@ codecov_project_target = "80%"
 codecov_source_target = "80%"
 core_versions = [
     "development",
-    "0.5",
 ]
 description = "Scoped Slack conversation history source"
 embedding_template = "https://github.com/memcastle/memcastle-embedding-provider.tpl"

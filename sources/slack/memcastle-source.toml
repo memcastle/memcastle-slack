@@ -7,6 +7,7 @@ description = "Explicitly scoped Slack channels, direct messages and threaded hi
 
 [compatibility]
 contract = "0.4.0"
+reconciliation = "0.1.0"
 memcastle = ">=0.5, <0.6"
 
 [capabilities]
@@ -52,11 +53,11 @@ description = "bootstrap lower bound (YYYY-MM-DD or Slack timestamp)"
 
 [options.until]
 type = "date"
-description = "optional upper history bound"
+description = "ongoing inclusive upper bound for root and reply membership"
 
 [options.revisit_days]
 type = "string"
-description = "recent roots to recheck on later runs (1-30 days, default 7)"
+description = "discovery root-age lookback (1-30 days, default 7); known threads are always rechecked"
 
 [build]
 command = ["cargo", "build", "--release", "--target", "wasm32-wasip2", "--target-dir", "target"]
@@ -64,3 +65,4 @@ output = "target/wasm32-wasip2/release/slack.wasm"
 
 [test]
 fixtures = "fixtures"
+fixture_credential = true
