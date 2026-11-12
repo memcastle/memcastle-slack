@@ -1,16 +1,16 @@
 //! Explicitly scoped Slack history. Core owns jobs, chunking and durable cursor writes.
 
 mod api;
+mod reconciliation;
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
-wit_bindgen::generate!({ path: "wit", world: "source" });
+wit_bindgen::generate!({ path: "wit", world: "reconciled-source" });
 
 use exports::memcastle::source::adapter::Guest;
 use memcastle::source::types::{
@@ -19,9 +19,7 @@ use memcastle::source::types::{
 };
 
 const MAX_CONVERSATIONS: usize = 32;
-const MAX_MESSAGES: usize = 30_000;
 const MAX_THREAD_MESSAGES: usize = 2_000;
-const DEFAULT_REVISIT_DAYS: u64 = 7;
 
 struct Slack;
 
@@ -110,40 +108,6 @@ fn digest(value: &str) -> String {
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Cursor {
-    /// Latest root observed on a completed or in-progress scan (per conversation).
-    high: BTreeMap<String, u64>,
-    /// Unix second of the scan; a new run only starts on a later second.
-    scan_at: u64,
-    /// Last candidate of an in-progress scan, in deterministic (conversation, timestamp) order.
-    after: Option<(String, u64)>,
-    complete: bool,
-}
-
-fn cursor(value: &str) -> Result<Option<Cursor>, SourceError> {
-    let raw: Value = serde_json::from_str(value)
-        .map_err(|_| SourceError::CursorInvalid("Slack cursor is not JSON; use --full".into()))?;
-    if raw.is_null() {
-        return Ok(None);
-    }
-    let state: Cursor = serde_json::from_value(raw)
-        .map_err(|_| SourceError::CursorInvalid("unknown Slack cursor; use --full".into()))?;
-    if state.high.keys().any(|key| !slack_id(key, "CGD"))
-        || state
-            .after
-            .as_ref()
-            .is_some_and(|(key, ts)| !slack_id(key, "CGD") || *ts == 0)
-        || state.scan_at == 0
-    {
-        return Err(SourceError::CursorInvalid(
-            "invalid Slack cursor; use --full".into(),
-        ));
-    }
-    Ok(Some(state))
-}
-
-#[derive(Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 struct Handle {
     conversation: String,
     root: String,
@@ -191,18 +155,13 @@ fn conversations(source: &SourceRef) -> Vec<String> {
         .unwrap_or_default()
 }
 
-fn conversation_info(source: &SourceRef, channel: &str) -> Result<(String, String), String> {
+fn conversation_info(source: &SourceRef, channel: &str) -> Result<(String, String), api::Error> {
     let info = api::request(source, "conversations.info", &[("channel", channel)])?;
     let item = info
         .get("channel")
         .ok_or("Slack conversation has no metadata")?;
-    if item.get("id").and_then(Value::as_str) != Some(channel)
-        || item.get("is_archived").and_then(Value::as_bool) == Some(true)
-        || item.get("is_member").and_then(Value::as_bool) == Some(false)
-    {
-        return Err(format!(
-            "conversation {channel} is unavailable, archived or inaccessible"
-        ));
+    if item.get("id").and_then(Value::as_str) != Some(channel) {
+        return Err("Slack conversation metadata has a mismatched ID".into());
     }
     let kind = if item.get("is_im").and_then(Value::as_bool) == Some(true) {
         "dm"
@@ -213,7 +172,7 @@ fn conversation_info(source: &SourceRef, channel: &str) -> Result<(String, Strin
     } else if item.get("is_channel").and_then(Value::as_bool) == Some(true) {
         "channel"
     } else {
-        return Err(format!("conversation {channel} has an unsupported type"));
+        return Err(format!("conversation {channel} has an unsupported type").into());
     };
     Ok((
         item.get("name")
@@ -229,7 +188,7 @@ fn page_messages(
     method: &str,
     params: &[(&str, &str)],
     cap: usize,
-) -> Result<Vec<Value>, String> {
+) -> Result<Vec<Value>, api::Error> {
     let mut all = Vec::new();
     let mut seen = BTreeSet::new();
     let mut cursor = String::new();
@@ -240,6 +199,11 @@ fn page_messages(
             query.push(("cursor", &cursor));
         }
         let response = api::request(source, method, &query)?;
+        if response.get("is_limited").and_then(Value::as_bool) == Some(true) {
+            return Err(api::Error::missing(
+                "Slack retention limits thread visibility",
+            ));
+        }
         let messages = response
             .get("messages")
             .and_then(Value::as_array)
@@ -247,7 +211,8 @@ fn page_messages(
         if messages.len() > 15 || all.len() + messages.len() > cap {
             return Err(format!(
                 "Slack {method} exceeds the safe page/message bound; narrow the scope"
-            ));
+            )
+            .into());
         }
         all.extend(messages.iter().cloned());
         let next = response
@@ -257,58 +222,21 @@ fn page_messages(
             .trim();
         if next.is_empty() {
             if response.get("has_more").and_then(Value::as_bool) == Some(true) {
-                return Err(format!(
-                    "Slack {method} indicated more results without a cursor"
-                ));
+                return Err(
+                    format!("Slack {method} indicated more results without a cursor").into(),
+                );
             }
             return Ok(all);
         }
         if !seen.insert(next.to_string()) {
-            return Err(format!("Slack {method} repeated its page cursor"));
+            return Err(format!("Slack {method} repeated its page cursor").into());
         }
         cursor = next.into();
     }
-    Err(format!(
-        "Slack {method} exceeds 2,000 pages; narrow the scope"
-    ))
+    Err(format!("Slack {method} exceeds 2,000 pages; narrow the scope").into())
 }
 
-fn roots(
-    source: &SourceRef,
-    channel: &str,
-    oldest: u64,
-    until: Option<u64>,
-) -> Result<Vec<(String, u64)>, String> {
-    let oldest_text = format!("{}.{:06}", oldest / 1_000_000, oldest % 1_000_000);
-    let latest_text = until.map(|ts| format!("{}.{:06}", ts / 1_000_000, ts % 1_000_000));
-    let mut params = vec![
-        ("channel", channel),
-        ("oldest", oldest_text.as_str()),
-        ("inclusive", "true"),
-    ];
-    if let Some(latest) = latest_text.as_deref() {
-        params.push(("latest", latest));
-    }
-    let mut roots = Vec::new();
-    for message in page_messages(source, "conversations.history", &params, MAX_MESSAGES)? {
-        let (ts, number) = message_ts(&message)?;
-        if message
-            .get("thread_ts")
-            .and_then(Value::as_str)
-            .is_some_and(|root| root != ts)
-        {
-            continue;
-        }
-        if number >= oldest && until.is_none_or(|latest| number <= latest) && retain(&message) {
-            roots.push((ts, number));
-        }
-    }
-    roots.sort_by_key(|(_, number)| *number);
-    roots.dedup_by_key(|(_, number)| *number);
-    Ok(roots)
-}
-
-fn thread(source: &SourceRef, channel: &str, root: &str) -> Result<Vec<Value>, String> {
+fn thread(source: &SourceRef, channel: &str, root: &str) -> Result<Vec<Value>, api::Error> {
     let messages = page_messages(
         source,
         "conversations.replies",
@@ -316,9 +244,23 @@ fn thread(source: &SourceRef, channel: &str, root: &str) -> Result<Vec<Value>, S
         MAX_THREAD_MESSAGES,
     )?;
     if messages.is_empty() || message_ts(&messages[0])?.0 != root {
-        return Err(format!(
-            "Slack thread {channel}:{root} is absent or incomplete"
+        return Err(api::Error::missing(
+            "Slack thread is absent or retention-limited",
         ));
+    }
+    if messages[0].get("subtype").and_then(Value::as_str) == Some("message_deleted") {
+        return Err(api::Error::removed());
+    }
+    if let Some(count) = messages[0].get("reply_count") {
+        let expected = count
+            .as_u64()
+            .ok_or("Slack thread has an invalid reply count")?;
+        if expected != (messages.len() - 1) as u64 {
+            return Err(
+                "Slack thread reply count indicates an incomplete or changing response; retry"
+                    .into(),
+            );
+        }
     }
     let mut by_ts = BTreeMap::new();
     for message in messages {
@@ -328,12 +270,10 @@ fn thread(source: &SourceRef, channel: &str, root: &str) -> Result<Vec<Value>, S
             .and_then(Value::as_str)
             .is_some_and(|parent| parent != root)
         {
-            return Err(format!(
-                "Slack thread {channel}:{root} has a mismatched root"
-            ));
+            return Err(format!("Slack thread {channel}:{root} has a mismatched root").into());
         }
         if by_ts.insert(number, message).is_some() {
-            return Err(format!("Slack thread {channel}:{root} repeated a message"));
+            return Err(format!("Slack thread {channel}:{root} repeated a message").into());
         }
         let _ = ts;
     }
@@ -527,16 +467,8 @@ impl Guest for Slack {
                 "since must be before until".into(),
             ));
         }
-        // Filter/scope changes create independent cursors; the bootstrap boundary is only narrowing.
-        let selectors: Vec<_> = values
-            .iter()
-            .filter(|(key, _)| !matches!(key.as_str(), "since" | "revisit_days" | "workspace"))
-            .collect();
-        let account = format!(
-            "{}:{}",
-            values["account"],
-            digest(&serde_json::to_string(&selectors).unwrap())
-        );
+        // Core partitions named miners; mutable membership must retain their inventory.
+        let account = format!("{}:{}", values["account"], values["auth_mode"]);
         Ok(SourceRef {
             source: "slack".into(),
             account: Some(account),
@@ -553,174 +485,70 @@ impl Guest for Slack {
     }
 
     fn discover(source: SourceRef, position: String, limit: u32) -> Result<Discovery, SourceError> {
-        let auth = api::request(&source, "auth.test", &[]).map_err(SourceError::Failed)?;
-        if auth.get("team_id").and_then(Value::as_str) != Some(source.locator.as_str()) {
-            return Err(SourceError::Failed(
-                "Slack token belongs to a different workspace than the locator".into(),
-            ));
-        }
-        let previous = cursor(&position)?;
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_err(|_| SourceError::Failed("invalid system clock".into()))?
-            .as_secs();
-        // A completed scan must stay exhausted long enough for the Core pipeline and
-        // conformance runner to observe it, even if the wall clock crosses a second.
-        if previous
-            .as_ref()
-            .is_some_and(|state| state.complete && now < state.scan_at.saturating_add(60))
-        {
-            return Ok(Discovery {
-                candidates: vec![],
-                exhausted: true,
-            });
-        }
-        let new_scan = previous.as_ref().is_none_or(|state| state.complete);
-        let mut state = previous.unwrap_or(Cursor {
-            high: BTreeMap::new(),
-            scan_at: now,
-            after: None,
-            complete: false,
-        });
-        if new_scan {
-            state.scan_at = now;
-            state.after = None;
-            state.complete = false;
-        }
-        let since = option(&source, "since")
-            .map(date)
-            .transpose()
-            .map_err(SourceError::InvalidInput)?
-            .unwrap_or(0);
-        let until = option(&source, "until")
-            .map(date)
-            .transpose()
-            .map_err(SourceError::InvalidInput)?;
-        let window = option(&source, "revisit_days")
-            .and_then(|value| value.parse::<u64>().ok())
-            .unwrap_or(DEFAULT_REVISIT_DAYS)
-            * 86_400_000_000;
-        let explicit = selected_threads(&source);
-        let mut found = Vec::new();
-        for channel in conversations(&source) {
-            let (name, kind) = conversation_info(&source, &channel).map_err(SourceError::Failed)?;
-            let oldest = state
-                .high
-                .get(&channel)
-                .copied()
-                .map_or(since, |high| high.saturating_sub(window).max(since));
-            // Exact thread selectors do not need a conversation-wide history listing.
-            let mut roots = if option(&source, "threads").is_some() {
-                Vec::new()
-            } else {
-                roots(&source, &channel, oldest, until).map_err(SourceError::Failed)?
-            };
-            roots.extend(
-                explicit
-                    .iter()
-                    .filter(|(id, _)| id == &channel)
-                    .filter_map(|(_, root)| timestamp(root).ok().map(|ts| (root.clone(), ts)))
-                    .filter(|(_, ts)| *ts >= since && until.is_none_or(|end| *ts <= end)),
-            );
-            roots.sort_by_key(|(_, number)| *number);
-            roots.dedup_by_key(|(_, number)| *number);
-            for (root, number) in roots {
-                if state
-                    .after
-                    .as_ref()
-                    .is_some_and(|after| (&channel, number) <= (&after.0, after.1))
-                {
-                    continue;
-                }
-                if let Some(filter) = option(&source, "threads")
-                    && !filter
-                        .split(',')
-                        .any(|entry| entry == format!("{channel}:{root}"))
-                {
-                    continue;
-                }
-                found.push((channel.clone(), name.clone(), kind.clone(), root, number));
-            }
-        }
-        found.sort_by(|left, right| (&left.0, left.4).cmp(&(&right.0, right.4)));
-        let len = found.len();
-        let max = limit as usize;
-        let mut candidates = Vec::new();
-        for (idx, (channel, name, kind, root, number)) in found.into_iter().take(max).enumerate() {
-            state.after = Some((channel.clone(), number));
-            state
-                .high
-                .entry(channel.clone())
-                .and_modify(|high| *high = (*high).max(number))
-                .or_insert(number);
-            state.complete = idx + 1 == len;
-            let handle = Handle {
-                conversation: channel.clone(),
-                root: root.clone(),
-                name,
-                kind,
-            };
-            candidates.push(Candidate {
-                external_id: format!("{channel}:{root}"),
-                cursor_after: serde_json::to_string(&state).unwrap(),
-                handle: serde_json::to_string(&handle).unwrap(),
-            });
-        }
+        let page = reconciliation::discover(source, position, limit)?;
         Ok(Discovery {
-            candidates,
-            exhausted: len <= max,
+            candidates: page.candidates,
+            exhausted: page.exhausted,
         })
     }
 
     fn read(source: SourceRef, candidate: Candidate) -> Result<Option<RawDocument>, SourceError> {
-        let handle: Handle = serde_json::from_str(&candidate.handle)
-            .map_err(|_| SourceError::Failed("invalid Slack candidate".into()))?;
-        if !conversations(&source).contains(&handle.conversation)
-            || candidate.external_id != format!("{}:{}", handle.conversation, handle.root)
-        {
-            return Err(SourceError::Failed(
-                "Slack candidate falls outside selected conversation".into(),
-            ));
+        use exports::memcastle::source::reconciliation::Acquisition;
+        match reconciliation::acquire(source, candidate)? {
+            Acquisition::Document(raw) => Ok(Some(raw)),
+            Acquisition::Skip | Acquisition::Retire(_) => Ok(None),
         }
-        let all =
-            thread(&source, &handle.conversation, &handle.root).map_err(SourceError::Failed)?;
-        let users = selected_users(&source);
-        let until = option(&source, "until")
-            .map(date)
-            .transpose()
-            .map_err(SourceError::InvalidInput)?;
-        let retained: Vec<_> = all
-            .into_iter()
-            .filter(|message| {
-                retain(message)
-                    && until.is_none_or(|end| message_ts(message).is_ok_and(|(_, ts)| ts <= end))
-                    && (users.is_empty()
-                        || message
-                            .get("user")
-                            .and_then(Value::as_str)
-                            .is_some_and(|user| users.iter().any(|selected| selected == user)))
-            })
-            .collect();
-        if retained.is_empty() {
-            return Ok(None);
-        }
-        let occurred_at = slack_time(&handle.root).map_err(SourceError::Failed)?;
-        // Retain only source-native fields needed for transcript/provenance; never embed auth or arbitrary Slack payloads.
-        let messages: Vec<_> = retained.iter().map(|m| json!({"type":"message","ts":m["ts"],"thread_ts":m.get("thread_ts"),"user":m.get("user"),"bot_id":m.get("bot_id"),"text":m["text"],"edited":m.get("edited")})).collect();
-        let body = serde_json::to_string(&messages).unwrap();
-        let metadata = json!({"workspace": source.locator, "conversation":handle.conversation,"root":handle.root,"name":handle.name,"kind":handle.kind,"message_count":messages.len(),"occurred_at":occurred_at});
-        Ok(Some(RawDocument {
-            external_id: candidate.external_id,
-            revision: digest(&format!("{body}\0{metadata}")),
-            body,
-            metadata: metadata.to_string(),
-            occurred_at: Some(occurred_at),
-        }))
     }
 
     fn normalize(raw: RawDocument) -> Result<CanonicalDocument, SourceError> {
         normalize_document(raw)
     }
+}
+
+fn read_document(
+    source: SourceRef,
+    candidate: Candidate,
+) -> Result<Option<RawDocument>, api::Error> {
+    let handle: Handle =
+        serde_json::from_str(&candidate.handle).map_err(|_| "invalid Slack candidate")?;
+    if !conversations(&source).contains(&handle.conversation)
+        || candidate.external_id != format!("{}:{}", handle.conversation, handle.root)
+    {
+        return Err("Slack candidate falls outside selected conversation".into());
+    }
+    let all = thread(&source, &handle.conversation, &handle.root)?;
+    let users = selected_users(&source);
+    let until = option(&source, "until")
+        .map(date)
+        .transpose()
+        .map_err(api::Error::from)?;
+    let retained: Vec<_> = all
+        .into_iter()
+        .filter(|message| {
+            retain(message)
+                && until.is_none_or(|end| message_ts(message).is_ok_and(|(_, ts)| ts <= end))
+                && (users.is_empty()
+                    || message
+                        .get("user")
+                        .and_then(Value::as_str)
+                        .is_some_and(|user| users.iter().any(|selected| selected == user)))
+        })
+        .collect();
+    if retained.is_empty() {
+        return Ok(None);
+    }
+    let occurred_at = slack_time(&handle.root)?;
+    // Retain only source-native fields needed for transcript/provenance; never embed auth or arbitrary Slack payloads.
+    let messages: Vec<_> = retained.iter().map(|m| json!({"type":"message","ts":m["ts"],"thread_ts":m.get("thread_ts"),"user":m.get("user"),"bot_id":m.get("bot_id"),"text":m["text"],"edited":m.get("edited")})).collect();
+    let body = serde_json::to_string(&messages).unwrap();
+    let metadata = json!({"workspace": source.locator, "conversation":handle.conversation,"root":handle.root,"name":handle.name,"kind":handle.kind,"message_count":messages.len(),"occurred_at":occurred_at});
+    Ok(Some(RawDocument {
+        external_id: candidate.external_id,
+        revision: digest(&format!("{body}\0{metadata}")),
+        body,
+        metadata: metadata.to_string(),
+        occurred_at: Some(occurred_at),
+    }))
 }
 
 export!(Slack);
@@ -780,7 +608,7 @@ mod tests {
             source(&[]).account,
             source(&[("workspace", "T123456789")]).account
         );
-        assert_ne!(
+        assert_eq!(
             source(&[]).account,
             source(&[("users", "U123456789")]).account
         );
@@ -797,8 +625,7 @@ mod tests {
 
     #[test]
     fn cursor_and_thread_normalization() {
-        assert!(cursor("null").unwrap().is_none());
-        assert!(cursor("{}").is_err());
+        assert!(Slack::discover(source(&[]), "{}".into(), 1).is_err());
         let raw = RawDocument { external_id:"C123456789:1760000000.000001".into(),revision:"x".into(),body:json!([{"type":"message","ts":"1760000000.000001","user":"U123456789","text":"hello"},{"type":"message","ts":"1760000001.000001","user":"U987654321","text":"reply"}]).to_string(),metadata:json!({"conversation":"C123456789","root":"1760000000.000001","name":"general","kind":"channel"}).to_string(),occurred_at:None };
         let doc = Slack::normalize(raw).unwrap();
         assert_eq!(doc.kind, SourceKind::Transcript);
@@ -825,18 +652,18 @@ mod tests {
             Slack::discover(source.clone(), second.candidates[0].cursor_after.clone(), 1).unwrap();
         assert!(after.candidates.is_empty());
         assert!(after.exhausted);
-        let mut later: Cursor = serde_json::from_str(&second.candidates[0].cursor_after).unwrap();
-        later.scan_at -= 61;
+        let mut later: Value = serde_json::from_str(&second.candidates[0].cursor_after).unwrap();
+        later["scan_at"] = json!(later["scan_at"].as_u64().unwrap() - 61);
         let revisit =
             Slack::discover(source.clone(), serde_json::to_string(&later).unwrap(), 1).unwrap();
         assert_eq!(
             revisit.candidates[0].external_id,
             first.candidates[0].external_id
         );
-        let raw = Slack::read(source.clone(), first.candidates[0].clone())
+        let raw = Slack::read(source.clone(), second.candidates[0].clone())
             .unwrap()
             .unwrap();
-        let again = Slack::read(source, first.candidates[0].clone())
+        let again = Slack::read(source, second.candidates[0].clone())
             .unwrap()
             .unwrap();
         assert_eq!(raw.revision, again.revision);
@@ -844,11 +671,11 @@ mod tests {
     }
 
     #[test]
-    fn independent_miners_and_user_filters_do_not_share_cursors() {
+    fn mutable_scope_preserves_account_and_user_filters_select_messages() {
         let project = source(&[("conversations", "C123456789")]);
         let direct = source(&[("conversations", "D123456789")]);
         let second_account = source(&[("account", "other-bot")]);
-        assert_ne!(project.account, direct.account);
+        assert_eq!(project.account, direct.account);
         assert_ne!(project.account, second_account.account);
         let candidates = Slack::discover(direct.clone(), "null".into(), 2)
             .unwrap()
@@ -856,14 +683,17 @@ mod tests {
         assert_eq!(candidates.len(), 2);
         assert!(candidates.iter().all(|c| c.external_id.starts_with('D')));
         let only_user = source(&[("users", "U987654321")]);
-        let first = Slack::discover(only_user.clone(), "null".into(), 1)
+        let first = Slack::discover(only_user.clone(), "null".into(), 2)
             .unwrap()
             .candidates
-            .remove(0);
+            .remove(1);
         let raw = Slack::read(only_user, first).unwrap().unwrap();
         assert_eq!(Slack::normalize(raw).unwrap().segments.len(), 1);
         assert!(
-            Slack::discover(source(&[("conversations", "C000000001")]), "null".into(), 1).is_err()
+            Slack::discover(source(&[("conversations", "C000000001")]), "null".into(), 1)
+                .unwrap()
+                .candidates
+                .is_empty()
         );
         assert!(
             Slack::discover(source(&[("conversations", "C000000004")]), "null".into(), 1).is_err()

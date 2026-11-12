@@ -11,8 +11,10 @@ Standalone plugin for explicitly scoped Slack conversation and thread history.
 
 The `slack` source supports independently selected bot and user Web API tokens from named source configurations;
 credentials remain outside plugin configuration and memory. It mines only configured channel, private-channel,
-DM or group-DM IDs. Each thread has a stable document with Core-managed revisions, cursors and destinations;
-deletions are not propagated by Core. Use a Core build with [PR #335](https://github.com/memcastle/memcastle/pull/335).
+DM or group-DM IDs. Each thread has a stable document with Core-managed inventory, revisions, retirement,
+restoration, cursors and destinations. Use development Core containing
+[`c311d09`](https://github.com/memcastle/memcastle/commit/c311d09) (Core #378) or a verified descendant.
+Older stable binaries also labeled `0.5.2` do not support the reconciliation extension.
 See [the source guide](sources/slack/README.md) for app scopes, installation, accounts and miner routing.
 
 ## Install
@@ -32,7 +34,7 @@ build the archive below and install `dist/slack-VERSION.tar.gz` instead.
 ## Build and test locally
 
 Install Rust with the `wasm32-wasip2` target and a plugin-capable MemCastle CLI. Use
-`MEMCASTLE_BIN=/path/to/current/memcastle` when the default CLI predates the selected-credential contract.
+`MEMCASTLE_BIN=/path/to/current/memcastle` to select a reconciliation-capable CLI.
 Commit `sources/slack/Cargo.lock` for reproducible builds.
 
 ```sh
@@ -43,10 +45,10 @@ cargo build --manifest-path sources/slack/Cargo.toml --locked --release --target
 cp sources/slack/target/wasm32-wasip2/release/slack.wasm sources/slack/source.wasm
 mkdir -p sources/slack/dist
 cp sources/slack/source.wasm sources/slack/dist/source.wasm
-PATH="$PWD/sources/slack/fixtures/bin:$PATH" memcastle source test sources/slack --no-build
-memcastle plugin inspect --json
-memcastle plugin package
-memcastle plugin test dist/slack-VERSION.tar.gz
+PATH="$PWD/sources/slack/fixtures/bin:$PATH" "${MEMCASTLE_BIN:-memcastle}" source test sources/slack --no-build
+"${MEMCASTLE_BIN:-memcastle}" plugin inspect --json
+"${MEMCASTLE_BIN:-memcastle}" plugin package
+"${MEMCASTLE_BIN:-memcastle}" plugin test dist/slack-VERSION.tar.gz
 node scripts/smoke_miners.mjs
 ```
 
@@ -55,9 +57,11 @@ Replace `VERSION` with the archive version in `dist/`. Packaging includes the so
 
 ## CI and releases
 
-CI validates the exact artifact against Core `development` and `0.5` with the shared plugin-validation workflow.
+CI validates the exact artifact against reconciliation-capable Core `development` with the shared plugin-validation workflow.
 The Core setup action checks the binary against `SHA256SUMS`; an extra offline smoke covers miners sharing
-one bot account, a second bot account and a user file credential. No live Slack workspace is needed.
+one bot account, a second bot account and a user file credential. It also checks identical-destination miner isolation,
+edits, retirement, unchanged-revision restoration, retained history and failure recovery. Conformance uses Core's
+fixed synthetic selected credential; no live Slack workspace is needed.
 
 Native Rust tests upload LCOV coverage and JUnit results to Codecov via GitHub OIDC.
 The repository's `.github/codecov.yml` defines the project, patch and source-module checks.
