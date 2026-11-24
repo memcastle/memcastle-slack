@@ -18,9 +18,11 @@ and build its component to `sources/<id>/source.wasm` before packaging.
 
 ## Check a change
 
-Install development Core containing `c311d09` (Core #378) or a verified descendant. Older stable `0.5.2`
-binaries lack reconciliation support; the source requires extension `0.1.0` on base contract `0.4.0`.
-For source and embedding modules, install Rust with the `wasm32-wasip2` target.
+Install upstream development Core containing `828f0f6` or a verified descendant. Older stable `0.5.2`
+binaries lack this WASI 0.3 baseline; the source requires extension `0.1.0` on base contract `0.5.0`.
+Install Rust 1.100+ with `wasm32-wasip3`, Python 3.11+, and wasm-tools 1.263.0.
+Use `mise tasks ls` for typed module tasks described in [root tasks](README.md#modules-and-root-tasks).
+Validate components with `scripts/validate_component.py` before fixture-backed host conformance.
 
 Run the affected module's tests and build, then from the project root:
 

@@ -1,5 +1,15 @@
 # memcastle-slack
 
+## Modules and root tasks
+
+- Source: [slack](sources/slack/).
+
+Use `mise tasks ls` for `source:slack:build`, `source:slack:test`, `source:slack:lint`, and `source:slack:format:check`.
+The build task stages `source.wasm` for packaging; native tests do not replace host conformance.
+Requires Rust 1.100+, `wasm32-wasip3`, wasm-tools 1.263.0, and upstream development Core containing `828f0f6`.
+Stable 0.5.2 predates WASI 0.3 despite sharing the development version string; the compatibility range is transitional.
+Run `python3 scripts/validate_component.py source sources/slack/source.wasm` before host and archive checks.
+
 [![CI][ci-badge]][ci-workflow] [![Codecov][codecov-badge]][codecov-project]
 
 [ci-badge]: https://github.com/memcastle/memcastle-slack/actions/workflows/ci.yaml/badge.svg?branch=main
@@ -13,7 +23,7 @@ The `slack` source supports independently selected bot and user Web API tokens f
 credentials remain outside plugin configuration and memory. It mines only configured channel, private-channel,
 DM or group-DM IDs. Each thread has a stable document with Core-managed inventory, revisions, retirement,
 restoration, cursors and destinations. Use development Core containing
-[`c311d09`](https://github.com/memcastle/memcastle/commit/c311d09) (Core #378) or a verified descendant.
+[`828f0f6`](https://github.com/memcastle/memcastle/commit/828f0f6) (WASI 0.3 and Core reconciliation) or a verified descendant.
 Older stable binaries also labeled `0.5.2` do not support the reconciliation extension.
 See [the source guide](sources/slack/README.md) for app scopes, installation, accounts and miner routing.
 
@@ -33,16 +43,16 @@ build the archive below and install `dist/slack-VERSION.tar.gz` instead.
 
 ## Build and test locally
 
-Install Rust with the `wasm32-wasip2` target and a plugin-capable MemCastle CLI. Use
+Install Rust 1.100+ with the `wasm32-wasip3` target and the upstream development MemCastle CLI. Use
 `MEMCASTLE_BIN=/path/to/current/memcastle` to select a reconciliation-capable CLI.
 Commit `sources/slack/Cargo.lock` for reproducible builds.
 
 ```sh
 cargo fmt --manifest-path sources/slack/Cargo.toml --all -- --check
 cargo test --manifest-path sources/slack/Cargo.toml --locked
-cargo clippy --manifest-path sources/slack/Cargo.toml --locked --target wasm32-wasip2 -- -D warnings
-cargo build --manifest-path sources/slack/Cargo.toml --locked --release --target wasm32-wasip2
-cp sources/slack/target/wasm32-wasip2/release/slack.wasm sources/slack/source.wasm
+cargo clippy --manifest-path sources/slack/Cargo.toml --locked --target wasm32-wasip3 -- -D warnings
+cargo build --manifest-path sources/slack/Cargo.toml --locked --release --target wasm32-wasip3
+cp sources/slack/target/wasm32-wasip3/release/slack.wasm sources/slack/source.wasm
 mkdir -p sources/slack/dist
 cp sources/slack/source.wasm sources/slack/dist/source.wasm
 PATH="$PWD/sources/slack/fixtures/bin:$PATH" "${MEMCASTLE_BIN:-memcastle}" source test sources/slack --no-build
@@ -56,6 +66,10 @@ Replace `VERSION` with the archive version in `dist/`. Packaging includes the so
 `manifest.toml` with an external `.sha256sum`; `plugin.toml` retains the stable module identity and paths.
 
 ## CI and releases
+
+Source coverage jobs set `WIT_BINDGEN_DEBUG=1` to emit generated ABI glue under the build directory,
+where cargo-llvm-cov's existing filtering excludes it instead of attributing it to provider code.
+Provider coverage gates and release component builds remain unchanged.
 
 CI validates the exact artifact against reconciliation-capable Core `development` with the shared plugin-validation workflow.
 The Core setup action checks the binary against `SHA256SUMS`; an extra offline smoke covers miners sharing
