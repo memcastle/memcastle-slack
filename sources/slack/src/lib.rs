@@ -10,7 +10,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
-wit_bindgen::generate!({ path: "wit", world: "reconciled-source" });
+// Stackful bindings let ordinary Rust I/O suspend behind async-typed WASI 0.3 exports.
+wit_bindgen::generate!({ path: "wit", world: "reconciled-source", sync: true });
 
 use exports::memcastle::source::adapter::Guest;
 use memcastle::source::types::{

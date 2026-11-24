@@ -6,8 +6,9 @@ This source mines only explicitly named Slack conversation IDs (public/private c
 
 Create a Slack app with read-only Web API access and install it in the workspace. For the conversation types used, grant the matching `channels:read` + `channels:history` (public), `groups:read` + `groups:history` (private), `im:read` + `im:history` (DM) and/or `mpim:read` + `mpim:history` (group DM) scopes. Slack's bot token sees conversations the bot has joined; a user token sees the user's accessible conversations. Neither token grants blanket access to every private channel or DM. Collect workspace (`T...`), conversation (`C...`, `G...`, `D...`) and optional user (`U...`, `W...`) IDs from Slack. A channel name is not a selector: IDs remain stable across renames.
 
-Use development Core containing [`c311d09`](https://github.com/memcastle/memcastle/commit/c311d09) (Core #378)
-or a verified descendant. The source requires reconciliation extension `0.1.0` alongside base contract `0.4.0`.
+Use upstream development Core containing [`828f0f6`](https://github.com/memcastle/memcastle/commit/828f0f6)
+or a verified descendant. The source requires reconciliation extension `0.1.0` alongside base contract `0.5.0`.
+The stackful `sync: true` bindings preserve synchronous Rust I/O behind async acquisition exports.
 Older stable builds also labeled `0.5.2` are insufficient; the manifest fails closed on unsupported hosts.
 Each `[[source_configs]]` chooses its own `env` variable or `file` reference; `auth_mode` declares whether that reference contains a bot or user token.
 Set environment variables **in the daemon's environment**, not only in the shell running the CLI; Core reads the first line of a credential file at execution time.
@@ -118,13 +119,13 @@ Only message text is searchable; author/time/thread identifiers and conversation
 
 ## Development and troubleshooting
 
-Build with Rust's `wasm32-wasip2` target, then use the checked-in stand-in `curl` to exercise offline conformance. `[test] fixture_credential = true` selects Core's fixed `memcastle-source-test-credential`; missing credentials are rejected and no live token is needed:
+Build with Rust 1.100+ and `wasm32-wasip3`, then use the checked-in stand-in `curl` to exercise offline conformance. `[test] fixture_credential = true` selects Core's fixed `memcastle-source-test-credential`; missing credentials are rejected and no live token is needed:
 
 ```sh
 cargo test --manifest-path sources/slack/Cargo.toml --locked
-cargo build --manifest-path sources/slack/Cargo.toml --locked --release --target wasm32-wasip2
+cargo build --manifest-path sources/slack/Cargo.toml --locked --release --target wasm32-wasip3
 mkdir -p sources/slack/dist
-cp sources/slack/target/wasm32-wasip2/release/slack.wasm sources/slack/dist/source.wasm
+cp sources/slack/target/wasm32-wasip3/release/slack.wasm sources/slack/dist/source.wasm
 cp sources/slack/dist/source.wasm sources/slack/source.wasm
 PATH="$PWD/sources/slack/fixtures/bin:$PATH" "${MEMCASTLE_BIN:-memcastle}" source test sources/slack --no-build
 "${MEMCASTLE_BIN:-memcastle}" plugin package
