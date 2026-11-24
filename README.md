@@ -67,6 +67,10 @@ Replace `VERSION` with the archive version in `dist/`. Packaging includes the so
 
 ## CI and releases
 
+Source coverage jobs set `WIT_BINDGEN_DEBUG=1` to emit generated ABI glue under the build directory,
+where cargo-llvm-cov's existing filtering excludes it instead of attributing it to provider code.
+Provider coverage gates and release component builds remain unchanged.
+
 CI validates the exact artifact against reconciliation-capable Core `development` with the shared plugin-validation workflow.
 The Core setup action checks the binary against `SHA256SUMS`; an extra offline smoke covers miners sharing
 one bot account, a second bot account and a user file credential. It also checks identical-destination miner isolation,
